@@ -3,6 +3,7 @@ package io.github.kotlin.fibonacci.logic.orchestrator
 import io.github.kotlin.fibonacci.domain.models.*
 import io.github.kotlin.fibonacci.logic.context.ContextPruner
 import io.github.kotlin.fibonacci.logic.managers.*
+import io.github.kotlin.fibonacci.logic.ai.AiClient // <-- 1. Import the interface
 
 class StoryOrchestrator(
     private val spatialManager: SpatialManager,
@@ -10,16 +11,14 @@ class StoryOrchestrator(
     private val eventGenerator: EventGenerator,
     private val worldState: WorldState,
     private val mainCharacter: Character,
-    private val contextPruner: ContextPruner // <-- 1. Add it here
+    private val contextPruner: ContextPruner,
+    private val aiClient: AiClient // <-- 2. Inject the AI Client
 ) {
 
-    // V1: This mocks the LLM intent fetching.
-    // In V2, you will send `rawInput` to an LLM and parse the JSON response into this Intent object.
     private fun fetchIntent(rawInput: String): Intent {
         val lowerInput = rawInput.lowercase()
         return when {
             lowerInput.contains("run to") || lowerInput.contains("go to") || lowerInput.contains("runs to") -> {
-                // Extremely naive extraction for the prototype
                 val dest = if (lowerInput.contains("village")) "Village" else "Unknown"
                 Intent.Travel(dest)
             }
@@ -30,7 +29,8 @@ class StoryOrchestrator(
         }
     }
 
-    fun processTurn(rawInput: String): String {
+    // 3. Change to a suspend function so we can make network calls
+    suspend fun processTurn(rawInput: String): String {
         val intent = fetchIntent(rawInput)
         var systemPromptNotes = ""
 
@@ -39,15 +39,14 @@ class StoryOrchestrator(
                 val destination = spatialManager.getLocation(intent.destinationName)
                 if (destination != null) {
                     val distance = spatialManager.calculateDistance(mainCharacter.currentLocation, destination)
-                    val travelTimeHours = (distance / 5.0).toInt() // Assuming 5km/h walking speed
+                    val travelTimeHours = (distance / 5.0).toInt()
 
                     systemPromptNotes += "Action: Travel to ${destination.name}. Distance: ${distance}km. "
 
-                    // Check for events during travel
                     val encounter = eventGenerator.checkForEncounter(distance, worldState)
                     if (encounter != null) {
                         systemPromptNotes += "URGENT EVENT: $encounter. Travel interrupted."
-                        chronosManager.advanceTime(travelTimeHours / 2) // Interrupted halfway
+                        chronosManager.advanceTime(travelTimeHours / 2)
                     } else {
                         mainCharacter.currentLocation = destination
                         chronosManager.advanceTime(travelTimeHours)
@@ -62,7 +61,6 @@ class StoryOrchestrator(
                 systemPromptNotes += "Action performed: ${intent.description}. "
             }
             is Intent.Scan -> {
-                // Costs no time, just fetches context
                 systemPromptNotes += "Scanning ${intent.target} from ${mainCharacter.currentLocation.name}. "
             }
             is Intent.Unknown -> {
@@ -70,16 +68,20 @@ class StoryOrchestrator(
             }
         }
 
-
-        // The world state has updated. Ain has moved or waited.
-        // Now, ask the Pruner what lore exists in this current state.
         val prunedContext = contextPruner.buildSceneContext(mainCharacter, intent)
 
-        // 3. Pass the pruned context into your prompt builder
-        return buildFinalPrompt(rawInput, systemPromptNotes, prunedContext)
+        // 4. Build the system-only knowledge block
+        val systemKnowledge = buildFinalPrompt(systemPromptNotes, prunedContext)
+
+        // 5. Fire the request to Gemini!
+        return aiClient.generateNarrative(
+            systemPrompt = systemKnowledge,
+            userInput = rawInput
+        )
     }
 
-    private fun buildFinalPrompt(userInput: String, systemNotes: String, prunedContext: String): String {
+    // 6. Notice we removed the USER INPUT section, as it goes into a different JSON field now
+    private fun buildFinalPrompt(systemNotes: String, prunedContext: String): String {
         return """
             SYSTEM KNOWLEDGE:
             Time: ${worldState.currentHour}:00
@@ -87,11 +89,9 @@ class StoryOrchestrator(
             Location: ${mainCharacter.currentLocation.name}
             Engine Notes: $systemNotes
             
-            $prunedContext  // <-- 5. Inject the lore into the prompt
+            $prunedContext
             
-            USER INPUT: "$userInput"
-            
-            INSTRUCTION: Write the resulting narrative prose based on the user input and system knowledge.
+            INSTRUCTION: Write the resulting narrative prose based ONLY on the user input and system knowledge. Keep it to one concise paragraph.
         """.trimIndent()
     }
 }
