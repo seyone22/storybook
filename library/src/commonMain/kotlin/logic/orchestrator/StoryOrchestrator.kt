@@ -37,8 +37,10 @@ class StoryOrchestrator(
         when (intent) {
             is Intent.Travel -> {
                 val destination = spatialManager.getLocation(intent.destinationName)
+                val startLocation = mainCharacter.currentLocation // Store the starting point
+
                 if (destination != null) {
-                    val distance = spatialManager.calculateDistance(mainCharacter.currentLocation, destination)
+                    val distance = spatialManager.calculateDistance(startLocation, destination)
                     val travelTimeHours = (distance / 5.0).toInt()
 
                     systemPromptNotes += "Action: Travel to ${destination.name}. Distance: ${distance}km. "
@@ -46,6 +48,18 @@ class StoryOrchestrator(
                     val encounter = eventGenerator.checkForEncounter(distance, worldState)
                     if (encounter != null) {
                         systemPromptNotes += "URGENT EVENT: $encounter. Travel interrupted."
+
+                        // Calculate the halfway coordinates
+                        val midX = (startLocation.x + destination.x) / 2
+                        val midY = (startLocation.y + destination.y) / 2
+
+                        // Move Ain to the path!
+                        mainCharacter.currentLocation = Location(
+                            name = "The Path between ${startLocation.name} and ${destination.name}",
+                            x = midX,
+                            y = midY
+                        )
+
                         chronosManager.advanceTime(travelTimeHours / 2)
                     } else {
                         mainCharacter.currentLocation = destination

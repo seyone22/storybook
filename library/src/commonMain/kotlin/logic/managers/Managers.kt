@@ -8,14 +8,9 @@ class SpatialManager(private val worldMap: List<Location>) {
 
     fun getLocation(name: String): Location? {
         // Check if the Official Name in our map contains the keyword provided by the user
-        val x = worldMap.find { officialLocation ->
+        return worldMap.find { officialLocation ->
             officialLocation.name.contains(name, ignoreCase = true)
         }
-
-        print("Finding location...")
-        print(x?.name)
-
-        return x
     }
 
     fun calculateDistance(loc1: Location, loc2: Location): Double {

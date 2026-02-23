@@ -34,6 +34,10 @@ class ContextPruner(private val globalLoreDatabase: List<LoreFragment>) {
             activeContext.addAll(characterLore.map { it.text })
         }
 
+        if (actor.currentLocation.name.startsWith("The Path")) {
+            activeContext.add("You are in the dangerous wilds between landmarks. The Mist is particularly unpredictable here.")
+        }
+
         // The Pruner drops everything else. Gracia Manor is completely forgotten
         // by the AI while Ain is in the Village.
         return if (activeContext.isEmpty()) {
