@@ -7,23 +7,29 @@ import io.github.kotlin.fibonacci.logic.ai.AiClient
 
 class StoryOrchestrator(
     private val spatialManager: SpatialManager,
+    private val characterManager: CharacterManager, // INJECTED
     private val chronosManager: ChronosManager,
     private val eventGenerator: EventGenerator,
     private val worldState: WorldState,
+    private val worldConfig: WorldConfig,
     private val mainCharacter: Character,
     private val contextPruner: ContextPruner,
     private val aiClient: AiClient,
     private val memoryManager: MemoryManager
 ) {
 
-    suspend fun processTurn(rawInput: String): String {
-        // --- PRE-COMPUTE CONTEXT ---
-        // Fetch the global truth and the recent history
-        val globalTruth = contextPruner.buildGlobalContext(mainCharacter)
-        val storySoFar = memoryManager.getRecentHistory() // <-- 2. Read memory
+    suspend fun startSession(): String {
+        memoryManager.clear()
+        val startingContext = contextPruner.buildGlobalContext(mainCharacter)
+        val prologueProse = aiClient.generatePrologue(worldState, mainCharacter, startingContext, worldConfig)
+        memoryManager.addMemory(prologueProse)
+        return prologueProse
+    }
 
-        // --- STAGE 1: THE DIRECTOR (PRO) ---
-        // Pass the history to the Director so it understands the context of the user's action
+    suspend fun processTurn(rawInput: String): String {
+        val globalTruth = contextPruner.buildGlobalContext(mainCharacter)
+        val storySoFar = memoryManager.getRecentHistory()
+
         val directorPlaybook = aiClient.getDirectorPlaybook(
             rawInput, worldState, mainCharacter, globalTruth, storySoFar
         )
@@ -31,10 +37,56 @@ class StoryOrchestrator(
         // --- KOTLIN ENGINE: STATE UPDATES ---
         val systemNotes = applyMechanicalUpdates(directorPlaybook.intent)
 
+        // Dynamic State Adjustments (Wallets, Relationships, Stats)
+        directorPlaybook.stateUpdates?.let { updates ->
+            updates.statChanges?.forEach { (k, v) -> mainCharacter.stats[k] = v }
+            updates.walletChanges?.forEach { (k, v) ->
+                val current = mainCharacter.wallet[k] ?: 0
+                mainCharacter.wallet[k] = current + v
+            }
+            updates.relationshipChanges?.forEach { (k, v) -> mainCharacter.relationships[k] = v }
+        }
+
+        // --- ASSIMILATE HALLUCINATIONS ---
+        directorPlaybook.newlyDiscoveredLocations.forEach { newLocDto ->
+            val parentLoc = spatialManager.getLocation(newLocDto.connectedToLocationId)
+            val newLocation = Location(
+                id = newLocDto.id,
+                name = newLocDto.name,
+                x = parentLoc?.x ?: 0,
+                y = parentLoc?.y ?: 0,
+                connectedLocations = listOf(newLocDto.connectedToLocationId)
+            )
+            spatialManager.addLocation(newLocation)
+            contextPruner.addGlobalLore(LoreFragment(
+                id = newLocDto.id,
+                category = "Location",
+                text = newLocDto.description,
+                locationTag = newLocDto.name
+            ))
+        }
+
+        directorPlaybook.newlyIntroducedCharacters.forEach { npcDto ->
+            val npcLocation = spatialManager.getLocation(npcDto.locationId) ?: mainCharacter.currentLocation
+            val newNpc = Character(
+                id = "npc_${npcDto.name.replace(" ", "_")}",
+                name = npcDto.name,
+                currentLocation = npcLocation,
+                background = npcDto.background,
+                personality = npcDto.personality
+            )
+            characterManager.addCharacter(newNpc)
+            contextPruner.addGlobalLore(LoreFragment(
+                id = "lore_${newNpc.id}",
+                category = "Character",
+                text = "${npcDto.name} - ${npcDto.background}. ${npcDto.personality}",
+                characterTag = npcDto.name
+            ))
+        }
+
         // --- STAGE 2: THE ACTORS (FLASH) ---
         val performances = directorPlaybook.characterCues.map { cue ->
             val filteredContext = contextPruner.filterForCharacter(cue.characterName, cue.directive)
-            // Actors need the history too, so they don't repeat the same dialogue
             aiClient.generateActorPerformance(cue.characterName, filteredContext, rawInput, storySoFar)
         }
 
@@ -44,17 +96,14 @@ class StoryOrchestrator(
             performances = performances,
             systemNotes = systemNotes + " " + directorPlaybook.narrativeNotes,
             worldState = worldState,
-            storySoFar = storySoFar // <-- 3. Pass history to the writer
+            storySoFar = storySoFar,
+            worldConfig = worldConfig
         )
 
-        // --- POST-COMPUTE MEMORY ---
-        // Save the brand new paragraph into the memory manager
-        memoryManager.addMemory(finalProse) // <-- 4. Save memory
-
+        memoryManager.addMemory(finalProse)
         return finalProse
     }
 
-    // Extracted the math/state logic out of the main loop to keep it clean
     private fun applyMechanicalUpdates(intent: Intent): String {
         var systemNotes = ""
 
@@ -65,7 +114,8 @@ class StoryOrchestrator(
 
                 if (destination != null) {
                     val distance = spatialManager.calculateDistance(startLocation, destination)
-                    val travelTimeHours = (distance / 5.0).toInt()
+                    // Convert hours to minutes for the new system (e.g., 5km/h = 12 mins per km)
+                    val travelTimeMinutes = ((distance / 5.0) * 60).toInt()
 
                     systemNotes += "Action: Travel to ${destination.name}. Distance: ${distance}km. "
 
@@ -73,18 +123,17 @@ class StoryOrchestrator(
                     if (encounter != null) {
                         systemNotes += "URGENT EVENT: $encounter. Travel interrupted. "
 
-                        val midX = (startLocation.x + destination.x) / 2
-                        val midY = (startLocation.y + destination.y) / 2
-
                         mainCharacter.currentLocation = Location(
+                            id = "path_${startLocation.id}_${destination.id}",
                             name = "The Path between ${startLocation.name} and ${destination.name}",
-                            x = midX,
-                            y = midY
+                            x = (startLocation.x + destination.x) / 2,
+                            y = (startLocation.y + destination.y) / 2,
+                            connectedLocations = listOf(startLocation.id, destination.id)
                         )
-                        chronosManager.advanceTime(travelTimeHours / 2)
+                        chronosManager.advanceTime(travelTimeMinutes / 2)
                     } else {
                         mainCharacter.currentLocation = destination
-                        chronosManager.advanceTime(travelTimeHours)
+                        chronosManager.advanceTime(travelTimeMinutes)
                         systemNotes += "Travel successful. "
                     }
                 } else {
@@ -92,7 +141,8 @@ class StoryOrchestrator(
                 }
             }
             is Intent.Action -> {
-                chronosManager.advanceTime(intent.hoursTaken)
+                // Now uses timeCostMinutes directly
+                chronosManager.advanceTime(intent.timeCostMinutes)
                 systemNotes += "Action performed: ${intent.description}. "
             }
             is Intent.Scan -> {
@@ -104,22 +154,5 @@ class StoryOrchestrator(
         }
 
         return systemNotes
-    }
-
-    suspend fun startSession(): String {
-        // 1. Wipe any old memory if we are restarting the game
-        memoryManager.clear()
-
-        // 2. Fetch the lore for the starting room and the character's background
-        val startingContext = contextPruner.buildGlobalContext(mainCharacter)
-
-        // 3. Ask the AI to paint the initial scene
-        val prologueProse = aiClient.generatePrologue(worldState, mainCharacter, startingContext)
-
-        // 4. Save this to memory! This ensures the AI remembers where Ain was
-        // standing when the player finally types their first command.
-        memoryManager.addMemory(prologueProse)
-
-        return prologueProse
     }
 }

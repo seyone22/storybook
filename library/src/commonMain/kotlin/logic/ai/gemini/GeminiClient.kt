@@ -51,38 +51,15 @@ data class Candidate(
     val content: Content
 )
 
-// --- 2. DTOs for parsing the Director's JSON Output ---
-@Serializable
-data class DirectorPlaybookDto(
-    val intentJson: IntentDto,
-    val characterCues: List<CharacterCueDto>,
-    val narrativeNotes: String
-)
-
-@Serializable
-data class IntentDto(
-    val type: String,
-    val destinationName: String? = null,
-    val target: String? = null,
-    val description: String? = null,
-    val hoursTaken: Int = 0
-)
-
-@Serializable
-data class CharacterCueDto(
-    val characterName: String,
-    val emotionalState: String,
-    val directive: String
-)
-
-// --- 3. The Client Implementation ---
 class GeminiAiClient(
     private val apiKey: String,
     private val httpClient: HttpClient
 ) : AiClient {
 
-    private val proEndpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent"
-    private val flashEndpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent"
+    private val proEndpoint =
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent"
+    private val flashEndpoint =
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent"
 
     private val jsonParser = Json { ignoreUnknownKeys = true }
 
@@ -90,20 +67,26 @@ class GeminiAiClient(
     override suspend fun generatePrologue(
         worldState: WorldState,
         mainCharacter: Character,
-        context: String
+        context: String,
+        worldConfig: WorldConfig // INJECTED THEME
     ): String {
         val systemPrompt = """
-            You are the narrator of a text-based fantasy RPG. This is the opening scene.
-            Time: ${worldState.currentHour}:00 | Mist: ${worldState.mistState}
+            You are the narrator of an interactive story. This is the opening scene.
+            
+            STORY CONFIGURATION:
+            Genre: ${worldConfig.genre}
+            Tone: ${worldConfig.tone}
+            Narrator Style: ${worldConfig.narratorStyle}
+            
+            Time: ${worldState.currentHour}:00 | Atmospheric Condition: ${worldState.mistState}
             Starting Location: ${mainCharacter.currentLocation.name}
             
             WORLD & CHARACTER CONTEXT:
             $context
             
-            Write the opening paragraph of the story. 
-            Establish the atmosphere of the starting location and introduce the main character (${mainCharacter.name}) in their current state.
-            End the paragraph with a subtle hook or observation that invites the player to take their first action.
-            Do NOT make the character take significant actions, speak, or leave the location. Just set the stage.
+            Write the gripping opening paragraph of the story. 
+            Establish the atmosphere of the starting location and introduce the protagonist (${mainCharacter.name}).
+            CRITICAL INSTRUCTION: You MUST end the prologue with an INCITING INCIDENT. An NPC should interrupt them, a threat should appear, or an urgent event must occur that forces the player to react immediately. Do not just describe the room; start the action.
         """.trimIndent()
 
         // We pass a dummy user input just to trigger the generation
@@ -119,16 +102,24 @@ class GeminiAiClient(
         storySoFar: String
     ): DirectorPlaybook {
         val systemPrompt = """
-            You are the Director of a strict text-based RPG engine.
+            You are the hidden Game Master and logic engine driving an interactive story.
+            
+            WORLD EXPANSION RULES:
+            1. If the user explores a logical sub-area not currently registered, YOU MAY INVENT IT.
+            2. If the plot demands a minor NPC, YOU MAY INVENT THEM.
+            3. BOUNDED CONSISTENCY: Keep all inventions strictly tied to the current location's theme and the established world context.
+            
+            WORLD DYNAMICS (CRITICAL):
+            The world is ALIVE. NPCs do not just wait to be spoken to. If the player is in a location with other characters, or if the plot demands it, you MUST use `characterCues` to make NPCs interrupt, speak, or act independently. Drive the plot forward!
+            
             Analyze the user's input and current state. 
-            Time: ${worldState.currentHour}:00 | Location: ${mainCharacter.currentLocation.name}
+            Time: ${worldState.timeString} | Location: ${mainCharacter.currentLocation.name} (ID: ${mainCharacter.currentLocation.id})
             
             $globalTruth
             
             PREVIOUS STORY CONTEXT:
             $storySoFar
             
-            Determine the mechanical intent and provide cues for any involved characters.
             Return ONLY a JSON object matching this exact structure:
             {
               "intentJson": {
@@ -136,16 +127,38 @@ class GeminiAiClient(
                 "destinationName": "string or null",
                 "target": "string or null",
                 "description": "string or null",
-                "hoursTaken": integer (estimate time cost)
+                "timeCostMinutes": integer
               },
               "characterCues": [
                 {
                   "characterName": "string",
                   "emotionalState": "string",
-                  "directive": "string (what should they do/say?)"
+                  "directive": "string"
                 }
               ],
-              "narrativeNotes": "String noting any global facts (e.g., 'Ain is using rimefrost blood.')"
+              "narrativeNotes": "String noting any global facts",
+              "newlyDiscoveredLocations": [
+                {
+                  "id": "snake_case_id",
+                  "name": "string",
+                  "description": "Rich lore description",
+                  "connectedToLocationId": "ID of the room they just came from"
+                }
+              ],
+              "newlyIntroducedCharacters": [
+                {
+                  "name": "string",
+                  "locationId": "snake_case_id",
+                  "background": "string",
+                  "personality": "string"
+                }
+              ],
+              "stateUpdates": {
+                "statChanges": { "StatName": "NewValue" },
+                "walletChanges": { "CurrencyName": -5 },
+                "relationshipChanges": { "NPCName": "New Status" }
+              },
+              "requestedImagePrompt": "string or null"
             }
         """.trimIndent()
 
@@ -154,18 +167,38 @@ class GeminiAiClient(
         return try {
             val dto = jsonParser.decodeFromString<DirectorPlaybookDto>(responseText)
 
+            // 1. Map Intent
             val domainIntent = when (dto.intentJson.type) {
                 "Travel" -> Intent.Travel(dto.intentJson.destinationName ?: "Unknown")
-                "Action" -> Intent.Action(dto.intentJson.description ?: "Takes action", dto.intentJson.hoursTaken)
+                "Action" -> Intent.Action(dto.intentJson.description ?: "Takes action", dto.intentJson.timeCostMinutes)
                 "Scan" -> Intent.Scan(dto.intentJson.target ?: "Surroundings")
                 else -> Intent.Unknown
             }
 
-            val domainCues = dto.characterCues.map {
-                CharacterCue(it.characterName, it.emotionalState, it.directive)
+            // 2. Map Entities
+            val domainCues = dto.characterCues.map { CharacterCue(it.characterName, it.emotionalState, it.directive) }
+            val newLocs = dto.newlyDiscoveredLocations.map { DiscoveredLocation(it.id, it.name, it.description, it.connectedToLocationId) }
+            val newChars = dto.newlyIntroducedCharacters.map { DiscoveredCharacter(it.name, it.locationId, it.background, it.personality) }
+
+            // 3. Map State Updates
+            val domainStateUpdates = dto.stateUpdates?.let { updatesDto ->
+                StateUpdate(
+                    statChanges = updatesDto.statChanges,
+                    walletChanges = updatesDto.walletChanges,
+                    relationshipChanges = updatesDto.relationshipChanges
+                )
             }
 
-            DirectorPlaybook(domainIntent, domainCues, dto.narrativeNotes)
+            // 4. Return fully populated Playbook
+            DirectorPlaybook(
+                intent = domainIntent,
+                characterCues = domainCues,
+                narrativeNotes = dto.narrativeNotes,
+                newlyDiscoveredLocations = newLocs,
+                newlyIntroducedCharacters = newChars,
+                stateUpdates = domainStateUpdates,
+                requestedImagePrompt = dto.requestedImagePrompt
+            )
         } catch (e: Exception) {
             println("JSON Parse Error: ${e.message}. Raw: $responseText")
             DirectorPlaybook(Intent.Unknown, emptyList(), "Director encountered an error parsing intent.")
@@ -199,13 +232,20 @@ class GeminiAiClient(
         performances: List<String>,
         systemNotes: String,
         worldState: WorldState,
-        storySoFar: String
+        storySoFar: String,
+        worldConfig: WorldConfig // INJECTED THEME
     ): String {
         val performanceText = performances.joinToString("\n") { "Actor Performance: $it" }
 
         val systemPrompt = """
-            You are the narrator of a fantasy story.
-            Time: ${worldState.currentHour}:00 | Mist: ${worldState.mistState}
+            You are the narrator of an interactive story.
+            
+            STORY CONFIGURATION:
+            Genre: ${worldConfig.genre}
+            Tone: ${worldConfig.tone}
+            Narrator Style: ${worldConfig.narratorStyle}
+
+            Time: ${worldState.currentHour}:00 | Atmospheric Condition: ${worldState.mistState}
             Engine Notes: $systemNotes
             
             PREVIOUS STORY CONTEXT:
@@ -215,7 +255,7 @@ class GeminiAiClient(
             $performanceText
             
             Combine the player's input and the actor performances into the NEXT paragraph of the story. 
-            Ensure it flows naturally from the PREVIOUS STORY CONTEXT. Maintain a consistent fantasy tone.
+            Ensure it flows naturally from the PREVIOUS STORY CONTEXT. Strictly adhere to the configured Genre and Tone.
         """.trimIndent()
 
         return makeGeminiCall(flashEndpoint, systemPrompt, userInput, thinkingLevel = "low")
@@ -232,7 +272,10 @@ class GeminiAiClient(
         val requestBody = GeminiRequest(
             systemInstruction = Content(parts = listOf(Part(text = systemPrompt))),
             contents = listOf(
-                Content(role = "user", parts = listOf(Part(text = userInput, thoughtSignature = "context_engineering_is_the_way_to_go")))
+                Content(
+                    role = "user",
+                    parts = listOf(Part(text = userInput, thoughtSignature = "context_engineering_is_the_way_to_go"))
+                )
             ),
             generationConfig = GenerationConfig(
                 thinkingConfig = ThinkingConfig(thinkingLevel = thinkingLevel),
