@@ -3,7 +3,7 @@ package io.github.kotlin.fibonacci.logic.orchestrator
 import io.github.kotlin.fibonacci.domain.models.*
 import io.github.kotlin.fibonacci.logic.context.ContextPruner
 import io.github.kotlin.fibonacci.logic.managers.*
-import io.github.kotlin.fibonacci.logic.ai.AiClient // <-- 1. Import the interface
+import io.github.kotlin.fibonacci.logic.ai.AiClient
 
 class StoryOrchestrator(
     private val spatialManager: SpatialManager,
@@ -12,100 +12,114 @@ class StoryOrchestrator(
     private val worldState: WorldState,
     private val mainCharacter: Character,
     private val contextPruner: ContextPruner,
-    private val aiClient: AiClient // <-- 2. Inject the AI Client
+    private val aiClient: AiClient,
+    private val memoryManager: MemoryManager
 ) {
 
-    private fun fetchIntent(rawInput: String): Intent {
-        val lowerInput = rawInput.lowercase()
-        return when {
-            lowerInput.contains("run to") || lowerInput.contains("go to") || lowerInput.contains("runs to") -> {
-                val dest = if (lowerInput.contains("village")) "Village" else "Unknown"
-                Intent.Travel(dest)
-            }
-            lowerInput.contains("looks around") -> Intent.Scan("Surroundings")
-            lowerInput.contains("spend the night") -> Intent.Action(rawInput, hoursTaken = 8)
-            lowerInput.contains("finishes breakfast") -> Intent.Action(rawInput, hoursTaken = 1)
-            else -> Intent.Unknown
+    suspend fun processTurn(rawInput: String): String {
+        // --- PRE-COMPUTE CONTEXT ---
+        // Fetch the global truth and the recent history
+        val globalTruth = contextPruner.buildGlobalContext(mainCharacter)
+        val storySoFar = memoryManager.getRecentHistory() // <-- 2. Read memory
+
+        // --- STAGE 1: THE DIRECTOR (PRO) ---
+        // Pass the history to the Director so it understands the context of the user's action
+        val directorPlaybook = aiClient.getDirectorPlaybook(
+            rawInput, worldState, mainCharacter, globalTruth, storySoFar
+        )
+
+        // --- KOTLIN ENGINE: STATE UPDATES ---
+        val systemNotes = applyMechanicalUpdates(directorPlaybook.intent)
+
+        // --- STAGE 2: THE ACTORS (FLASH) ---
+        val performances = directorPlaybook.characterCues.map { cue ->
+            val filteredContext = contextPruner.filterForCharacter(cue.characterName, cue.directive)
+            // Actors need the history too, so they don't repeat the same dialogue
+            aiClient.generateActorPerformance(cue.characterName, filteredContext, rawInput, storySoFar)
         }
+
+        // --- STAGE 3: THE COMPOSITOR (FLASH) ---
+        val finalProse = aiClient.composeFinalNarrative(
+            userInput = rawInput,
+            performances = performances,
+            systemNotes = systemNotes + " " + directorPlaybook.narrativeNotes,
+            worldState = worldState,
+            storySoFar = storySoFar // <-- 3. Pass history to the writer
+        )
+
+        // --- POST-COMPUTE MEMORY ---
+        // Save the brand new paragraph into the memory manager
+        memoryManager.addMemory(finalProse) // <-- 4. Save memory
+
+        return finalProse
     }
 
-    // 3. Change to a suspend function so we can make network calls
-    suspend fun processTurn(rawInput: String): String {
-        val intent = fetchIntent(rawInput)
-        var systemPromptNotes = ""
+    // Extracted the math/state logic out of the main loop to keep it clean
+    private fun applyMechanicalUpdates(intent: Intent): String {
+        var systemNotes = ""
 
         when (intent) {
             is Intent.Travel -> {
                 val destination = spatialManager.getLocation(intent.destinationName)
-                val startLocation = mainCharacter.currentLocation // Store the starting point
+                val startLocation = mainCharacter.currentLocation
 
                 if (destination != null) {
                     val distance = spatialManager.calculateDistance(startLocation, destination)
                     val travelTimeHours = (distance / 5.0).toInt()
 
-                    systemPromptNotes += "Action: Travel to ${destination.name}. Distance: ${distance}km. "
+                    systemNotes += "Action: Travel to ${destination.name}. Distance: ${distance}km. "
 
                     val encounter = eventGenerator.checkForEncounter(distance, worldState)
                     if (encounter != null) {
-                        systemPromptNotes += "URGENT EVENT: $encounter. Travel interrupted."
+                        systemNotes += "URGENT EVENT: $encounter. Travel interrupted. "
 
-                        // Calculate the halfway coordinates
                         val midX = (startLocation.x + destination.x) / 2
                         val midY = (startLocation.y + destination.y) / 2
 
-                        // Move Ain to the path!
                         mainCharacter.currentLocation = Location(
                             name = "The Path between ${startLocation.name} and ${destination.name}",
                             x = midX,
                             y = midY
                         )
-
                         chronosManager.advanceTime(travelTimeHours / 2)
                     } else {
                         mainCharacter.currentLocation = destination
                         chronosManager.advanceTime(travelTimeHours)
-                        systemPromptNotes += "Travel successful. "
+                        systemNotes += "Travel successful. "
                     }
                 } else {
-                    systemPromptNotes += "Error: Location not found in spatial registry. "
+                    systemNotes += "Error: Location not found in spatial registry. "
                 }
             }
             is Intent.Action -> {
                 chronosManager.advanceTime(intent.hoursTaken)
-                systemPromptNotes += "Action performed: ${intent.description}. "
+                systemNotes += "Action performed: ${intent.description}. "
             }
             is Intent.Scan -> {
-                systemPromptNotes += "Scanning ${intent.target} from ${mainCharacter.currentLocation.name}. "
+                systemNotes += "Scanning ${intent.target} from ${mainCharacter.currentLocation.name}. "
             }
             is Intent.Unknown -> {
-                systemPromptNotes += "Action unclear. "
+                systemNotes += "Action unclear or purely conversational. "
             }
         }
 
-        val prunedContext = contextPruner.buildSceneContext(mainCharacter, intent)
-
-        // 4. Build the system-only knowledge block
-        val systemKnowledge = buildFinalPrompt(systemPromptNotes, prunedContext)
-
-        // 5. Fire the request to Gemini!
-        return aiClient.generateNarrative(
-            systemPrompt = systemKnowledge,
-            userInput = rawInput
-        )
+        return systemNotes
     }
 
-    // 6. Notice we removed the USER INPUT section, as it goes into a different JSON field now
-    private fun buildFinalPrompt(systemNotes: String, prunedContext: String): String {
-        return """
-            SYSTEM KNOWLEDGE:
-            Time: ${worldState.currentHour}:00
-            Mist State: ${worldState.mistState}
-            Location: ${mainCharacter.currentLocation.name}
-            Engine Notes: $systemNotes
-            
-            $prunedContext
-            
-            INSTRUCTION: Write the resulting narrative prose based ONLY on the user input and system knowledge. Keep it to one concise paragraph.
-        """.trimIndent()
+    suspend fun startSession(): String {
+        // 1. Wipe any old memory if we are restarting the game
+        memoryManager.clear()
+
+        // 2. Fetch the lore for the starting room and the character's background
+        val startingContext = contextPruner.buildGlobalContext(mainCharacter)
+
+        // 3. Ask the AI to paint the initial scene
+        val prologueProse = aiClient.generatePrologue(worldState, mainCharacter, startingContext)
+
+        // 4. Save this to memory! This ensures the AI remembers where Ain was
+        // standing when the player finally types their first command.
+        memoryManager.addMemory(prologueProse)
+
+        return prologueProse
     }
 }

@@ -4,46 +4,57 @@ import io.github.kotlin.fibonacci.domain.models.*
 
 class ContextPruner(private val globalLoreDatabase: List<LoreFragment>) {
 
-    fun buildSceneContext(actor: Character, intent: Intent): String {
+    // --- STAGE 1: FOR THE DIRECTOR (PRO) ---
+    // The Director needs to know the ABSOLUTE TRUTH to drive the plot.
+    fun buildGlobalContext(actor: Character): String {
         val currentLocation = actor.currentLocation.name
         val activeContext = mutableListOf<String>()
 
-        // RULE 1: Always load the baseline lore for the current location
+        // The Director sees ALL lore for the location, regardless of secrets
         val locationLore = globalLoreDatabase.filter { it.locationTag == currentLocation }
-        for (lore in locationLore) {
-            // Check for hidden information!
-            // If the lore has a required secret, Ain must know it to "see" it.
-            if (lore.requiredSecret == null || actor.knownInformation.contains(lore.requiredSecret)) {
-                activeContext.add(lore.text)
-            }
-        }
-
-        // RULE 2: Load specific character lore if the user is looking for them
-        // (e.g., "Find the apothecary")
-        if (intent is Intent.Travel || intent is Intent.Scan) {
-            // A naive check for the prototype. If the intent mentions a character tag, load it.
-            val target = when (intent) {
-                is Intent.Travel -> intent.destinationName
-                is Intent.Scan -> intent.target
-                else -> ""
-            }
-
-            val characterLore = globalLoreDatabase.filter {
-                it.characterTag != null && target.contains(it.characterTag, ignoreCase = true)
-            }
-            activeContext.addAll(characterLore.map { it.text })
-        }
+        activeContext.addAll(locationLore.map { "GLOBAL FACT: ${it.text}" })
 
         if (actor.currentLocation.name.startsWith("The Path")) {
-            activeContext.add("You are in the dangerous wilds between landmarks. The Mist is particularly unpredictable here.")
+            activeContext.add("GLOBAL FACT: You are in the dangerous wilds between landmarks. The Mist is unpredictable here.")
         }
 
-        // The Pruner drops everything else. Gracia Manor is completely forgotten
-        // by the AI while Ain is in the Village.
         return if (activeContext.isEmpty()) {
-            "No specific historical or character context for this area."
+            "No specific historical context for this area."
         } else {
-            "RELEVANT LORE & CHARACTERS:\n" + activeContext.joinToString("\n") { "- $it" }
+            "ABSOLUTE WORLD KNOWLEDGE:\n" + activeContext.joinToString("\n")
         }
+    }
+
+    // --- STAGE 2: FOR THE ACTORS (FLASH) ---
+    // This is the KNOWLEDGE GUARD. It prevents characters from becoming omniscient.
+    fun filterForCharacter(characterName: String, directive: String): String {
+
+        // 1. Get lore specific to this character's personality/history
+        val characterLore = globalLoreDatabase.filter {
+            it.characterTag.equals(characterName, ignoreCase = true)
+        }
+
+        // 2. Get global truths that everyone knows
+        val commonKnowledge = globalLoreDatabase.filter { it.isGlobalTruth }
+
+        // 3. (Optional V2) - Check if the character has specific 'requiredSecrets'
+        // to know about hidden things in the room.
+
+        val knownLoreText = (characterLore + commonKnowledge)
+            .distinct()
+            .joinToString("\n") { "- ${it.text}" }
+
+        // 4. In a production build, you would run a regex here to scrub "Secret Keywords"
+        // (like 'Rimefrost') from the Director's directive if the character doesn't know it.
+        // For now, we provide the clean prompt block:
+
+        return """
+            DIRECTOR'S CUE: $directive
+            
+            YOUR INTERNAL LORE & KNOWLEDGE:
+            $knownLoreText
+            
+            Remember: Do not act on or mention any knowledge outside of your specific lore.
+        """.trimIndent()
     }
 }

@@ -7,12 +7,6 @@ data class Location(
     val isHidden: Boolean = false
 )
 
-data class Character(
-    val name: String,
-    var currentLocation: Location,
-    val knownInformation: List<String> = emptyList()
-)
-
 data class WorldState(
     var currentHour: Int = 8, // 24-hour clock
     var mistState: String = "Clear", // e.g., "Clear", "Rising", "Thick"
@@ -27,11 +21,33 @@ sealed class Intent {
     object Unknown : Intent()
 }
 
-// Represents a single piece of history, character sheet, or location description
 data class LoreFragment(
     val id: String,
     val text: String,
-    val locationTag: String? = null,   // Only load if Ain is here (e.g., "Frostspine Village")
-    val characterTag: String? = null,  // Only load if Ain interacts with them (e.g., "Apothecary")
-    val requiredSecret: String? = null // HIDDEN INFO: Only load if Ain knows this secret
+    val locationTag: String? = null,
+    val characterTag: String? = null,
+    val requiredSecret: String? = null,
+    // NEW: A list of character names who intrinsically know this fact
+    val visibleTo: List<String> = emptyList(),
+    // NEW: If true, everyone knows it. If false, it's a secret.
+    val isGlobalTruth: Boolean = false
+)
+
+data class Character(
+    val name: String,
+    var currentLocation: Location,
+    // The list of secrets this specific character has discovered
+    var knownInformation: List<String> = emptyList()
+)
+
+data class DirectorPlaybook(
+    val intent: Intent,
+    val characterCues: List<CharacterCue>,
+    val narrativeNotes: String
+)
+
+data class CharacterCue(
+    val characterName: String,
+    val emotionalState: String,
+    val directive: String
 )
