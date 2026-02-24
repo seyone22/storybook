@@ -53,6 +53,13 @@ class ContextPruner(initialLoreDatabase: List<LoreFragment>) {
             }
         }
 
+        if (actor.activeObjectives.isNotEmpty()) {
+            activeContext.add("- ACTIVE OBJECTIVES:")
+            actor.activeObjectives.forEach { (quest, status) ->
+                activeContext.add("  * [$quest]: $status")
+            }
+        }
+
         if (actor.currentLocation.name.startsWith("The Path")) {
             activeContext.add("GLOBAL FACT: You are in the dangerous wilds between landmarks.")
         }

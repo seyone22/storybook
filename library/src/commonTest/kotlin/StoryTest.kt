@@ -4,7 +4,7 @@ import io.github.kotlin.fibonacci.domain.models.*
 import io.github.kotlin.fibonacci.logic.managers.*
 import io.github.kotlin.fibonacci.logic.context.*
 import io.github.kotlin.fibonacci.logic.orchestrator.StoryOrchestrator
-import io.github.kotlin.fibonacci.logic.ai.GeminiAiClient
+import io.github.kotlin.fibonacci.logic.ai.gemini.GeminiAiClient
 import io.ktor.client.*
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.serialization.kotlinx.json.*
@@ -114,7 +114,7 @@ class StoryEngineTest {
         val chronos = ChronosManager(worldState)
         val events = EventGenerator()
         val pruner = ContextPruner(globalLore)
-        val memory = TransientMemoryManager()
+        val memory = ArchivalMemoryManager(aiClient)
 
         val orchestrator = StoryOrchestrator(
             spatial, characterManager, chronos, events, worldState, worldConfig, ain, pruner, aiClient, memory
@@ -146,6 +146,10 @@ class StoryEngineTest {
         println("\n> Action: I make my way to the grand hall...")
         val result2 = orchestrator.processTurn("I travel to the grand hall, where my uncle, Duke Alistair, and my cousin Seraphina are eating.")
         println("\n[AI NARRATIVE 3]:\n$result2")
+
+        println("\n> Action: I make my way to the grand hall...")
+        val result3 = orchestrator.processTurn("I then check my pockets to see what I have, and also look around the hall to see who's there and what they're doing.")
+        println("\n[AI NARRATIVE 3]:\n$result3")
 
         // Final Status Check
         println("\n--- FINAL WORLD STATE ---")

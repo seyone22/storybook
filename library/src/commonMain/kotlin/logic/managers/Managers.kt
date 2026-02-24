@@ -7,9 +7,22 @@ import kotlin.math.sqrt
 class SpatialManager(private val initialMap: List<Location>) {
     private val worldMap = initialMap.toMutableList()
 
-    fun getLocation(name: String): Location? {
-        return worldMap.find { officialLocation ->
-            officialLocation.name.contains(name, ignoreCase = true)
+    fun getLocation(identifier: String?): Location? {
+        if (identifier.isNullOrBlank()) return null
+
+        // 1. Strip all spaces, punctuation, and special characters, then make lowercase
+        // E.g., " Gar Village. " becomes "garvillage"
+        val normalizedInput = identifier.replace(Regex("[^a-zA-Z0-9]"), "").lowercase()
+
+        if (normalizedInput.isEmpty()) return null
+
+        return worldMap.find { loc ->
+            // 2. Normalize the engine's IDs and Names the exact same way
+            val normalizedId = loc.id.replace(Regex("[^a-zA-Z0-9]"), "").lowercase()
+            val normalizedName = loc.name.replace(Regex("[^a-zA-Z0-9]"), "").lowercase()
+
+            // 3. Compare the stripped versions
+            normalizedId == normalizedInput || normalizedName.contains(normalizedInput)
         }
     }
 
@@ -34,6 +47,11 @@ class CharacterManager(initialCharacters: List<Character>) {
 
     fun getCharactersInLocation(locationId: String): List<Character> {
         return activeCharacters.filter { it.currentLocation.id == locationId }
+    }
+
+    // NEW: Returns all characters currently tracked by the engine
+    fun getAllCharacters(): List<Character> {
+        return activeCharacters.toList()
     }
 }
 

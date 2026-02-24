@@ -7,4 +7,5 @@ interface AiClient {
     suspend fun getDirectorPlaybook(userInput: String, worldState: WorldState, mainCharacter: Character, globalTruth: String, storySoFar: String): DirectorPlaybook
     suspend fun generateActorPerformance(characterName: String, context: String, userInput: String, storySoFar: String): String
     suspend fun composeFinalNarrative(userInput: String, performances: List<String>, systemNotes: String, worldState: WorldState, storySoFar: String, worldConfig: WorldConfig): String
+    suspend fun summarizeEvents(currentSummary: String, newEvents: String): String
 }

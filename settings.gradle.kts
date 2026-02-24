@@ -15,3 +15,6 @@ dependencyResolutionManagement {
 
 rootProject.name = "storybook"
 include(":library")
+include("cli")
+include("cli")
+include("cli")

@@ -55,24 +55,7 @@ class StoryOrchestrator(
             rawInput, worldState, mainCharacter, globalTruth, storySoFar
         )
 
-        // --- KOTLIN ENGINE: STATE UPDATES ---
-        val systemNotes = applyMechanicalUpdates(directorPlaybook.intent)
-
-        // Dynamic State Adjustments (Wallets, Relationships, Stats)
-        directorPlaybook.stateUpdates?.let { updates ->
-            updates.statChanges?.forEach { (k, v) -> mainCharacter.stats[k] = v }
-            updates.walletChanges?.forEach { (k, v) ->
-                val current = mainCharacter.wallet[k] ?: 0
-                mainCharacter.wallet[k] = current + v
-            }
-            updates.relationshipChanges?.forEach { (k, v) -> mainCharacter.relationships[k] = v }
-
-            // NEW: Apply Inventory Updates
-            updates.inventoryGained?.forEach { mainCharacter.inventory.add(it) }
-            updates.inventoryLost?.forEach { mainCharacter.inventory.remove(it) }
-        }
-
-        // --- ASSIMILATE HALLUCINATIONS ---
+        // --- 3. ASSIMILATE HALLUCINATIONS (MUST HAPPEN FIRST!) ---
         directorPlaybook.newlyDiscoveredLocations.forEach { newLocDto ->
             val parentLoc = spatialManager.getLocation(newLocDto.connectedToLocationId)
             val newLocation = Location(
@@ -107,6 +90,35 @@ class StoryOrchestrator(
                 text = "${npcDto.name} - ${npcDto.background}. ${npcDto.personality}",
                 characterTag = npcDto.name
             ))
+        }
+
+        // --- 4. KOTLIN ENGINE: STATE UPDATES (NOW IT CAN FIND THE NEW LOCATIONS) ---
+        val systemNotes = applyMechanicalUpdates(directorPlaybook.intent)
+
+        println("\n[SYSTEM DIAGNOSTIC]: $systemNotes")
+
+        // Dynamic State Adjustments (Wallets, Relationships, Stats)
+        directorPlaybook.stateUpdates?.let { updates ->
+            updates.statChanges?.forEach { (k, v) -> mainCharacter.stats[k] = v }
+            updates.walletChanges?.forEach { (k, v) ->
+                val current = mainCharacter.wallet[k] ?: 0
+                mainCharacter.wallet[k] = current + v
+            }
+            updates.relationshipChanges?.forEach { (k, v) -> mainCharacter.relationships[k] = v }
+            updates.inventoryGained?.forEach { mainCharacter.inventory.add(it) }
+            updates.inventoryLost?.forEach { mainCharacter.inventory.remove(it) }
+
+            updates.objectiveChanges?.forEach { (questName, status) ->
+                val upperStatus = status.uppercase()
+                if (upperStatus.startsWith("COMPLETED") || upperStatus.startsWith("FAILED")) {
+                    mainCharacter.activeObjectives.remove(questName)
+                    val memoryOfQuest = "Objective Resolved - [$questName]: $status"
+                    mainCharacter.knownInformation = mainCharacter.knownInformation + memoryOfQuest
+                    println("[SYSTEM]: Quest Resolved! $questName")
+                } else {
+                    mainCharacter.activeObjectives[questName] = status
+                }
+            }
         }
 
         // --- STAGE 2: THE ACTORS (FLASH) ---

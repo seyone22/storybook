@@ -1,6 +1,7 @@
-package io.github.kotlin.fibonacci.logic.ai
+package io.github.kotlin.fibonacci.logic.ai.gemini
 
 import io.github.kotlin.fibonacci.domain.models.*
+import io.github.kotlin.fibonacci.logic.ai.AiClient
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.request.*
@@ -153,13 +154,14 @@ class GeminiAiClient(
                   "personality": "string"
                 }
               ],
-                "stateUpdates": {
-                  "statChanges": { "StatName": "NewValue" },
-                  "walletChanges": { "CurrencyName": -5 },
-                  "relationshipChanges": { "NPCName": "New Status" },
-                  "inventoryGained": ["Item 1"],
-                  "inventoryLost": ["Item 2"]
-                },
+              "stateUpdates": {
+                "statChanges": { "StatName": "NewValue" },
+                "walletChanges": { "CurrencyName": -5 },
+                "relationshipChanges": { "NPCName": "New Status" },
+                "inventoryGained": ["Item 1"],
+                "inventoryLost": ["Item 2"],
+                "objectiveChanges": { "QuestName": "Status (Use COMPLETED or FAILED to resolve)" }
+              },
               "requestedImagePrompt": "string or null"
             }
         """.trimIndent()
@@ -182,14 +184,15 @@ class GeminiAiClient(
             val newLocs = dto.newlyDiscoveredLocations.map { DiscoveredLocation(it.id, it.name, it.description, it.connectedToLocationId) }
             val newChars = dto.newlyIntroducedCharacters.map { DiscoveredCharacter(it.name, it.locationId, it.background, it.personality) }
 
-            // 3. Map State Updates
+            // 3. Map State Updates (Now including objectiveChanges)
             val domainStateUpdates = dto.stateUpdates?.let { updatesDto ->
                 StateUpdate(
                     statChanges = updatesDto.statChanges,
                     walletChanges = updatesDto.walletChanges,
                     relationshipChanges = updatesDto.relationshipChanges,
-                    inventoryGained = updatesDto.inventoryGained, // NEW
-                    inventoryLost = updatesDto.inventoryLost // NEW
+                    inventoryGained = updatesDto.inventoryGained,
+                    inventoryLost = updatesDto.inventoryLost,
+                    objectiveChanges = updatesDto.objectiveChanges // NEW
                 )
             }
 
@@ -237,7 +240,7 @@ class GeminiAiClient(
         systemNotes: String,
         worldState: WorldState,
         storySoFar: String,
-        worldConfig: WorldConfig // INJECTED THEME
+        worldConfig: WorldConfig
     ): String {
         val performanceText = performances.joinToString("\n") { "Actor Performance: $it" }
 
@@ -249,7 +252,7 @@ class GeminiAiClient(
             Tone: ${worldConfig.tone}
             Narrator Style: ${worldConfig.narratorStyle}
 
-            Time: ${worldState.currentHour}:00 | Atmospheric Condition: ${worldState.mistState}
+            Time: ${worldState.timeString} | Atmospheric Condition: ${worldState.mistState}
             Engine Notes: $systemNotes
             
             PREVIOUS STORY CONTEXT:
@@ -260,6 +263,32 @@ class GeminiAiClient(
             
             Combine the player's input and the actor performances into the NEXT paragraph of the story. 
             Ensure it flows naturally from the PREVIOUS STORY CONTEXT. Strictly adhere to the configured Genre and Tone.
+        """.trimIndent()
+
+        return makeGeminiCall(flashEndpoint, systemPrompt, userInput, thinkingLevel = "low")
+    }
+
+    // --- STAGE 4: THE ARCHIVIST (FLASH) ---
+    // NEW: Handles the summarization for Long-Term Memory
+    override suspend fun summarizeEvents(currentSummary: String, newEvents: String): String {
+        val systemPrompt = """
+            You are the Archival Memory Unit of a game engine.
+            Your job is to compress narrative text into dense, factual bullet points.
+            
+            RULES:
+            1. Focus ONLY on major plot movements, changes in location, injuries, and shifting character dynamics.
+            2. Strip out all atmospheric fluff, descriptive prose, and minor dialogue.
+            3. Maintain a continuous, concise log of the story so far.
+        """.trimIndent()
+
+        val userInput = """
+            CURRENT ARCHIVE:
+            $currentSummary
+            
+            NEW EVENTS TO ASSIMILATE:
+            $newEvents
+            
+            Output the updated, complete archive.
         """.trimIndent()
 
         return makeGeminiCall(flashEndpoint, systemPrompt, userInput, thinkingLevel = "low")

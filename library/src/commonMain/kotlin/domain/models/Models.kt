@@ -81,6 +81,7 @@ data class Character(
     val wallet: MutableMap<String, Int> = mutableMapOf(), // e.g., {"Crowns": 0, "Stags": 5}
     val relationships: MutableMap<String, String> = mutableMapOf(), // e.g., {"Ayasa": "Owes 10 stags"}
 
+    val activeObjectives: MutableMap<String, String> = mutableMapOf(),
     val inventory: MutableList<String> = mutableListOf(),
     var knownInformation: List<String> = emptyList()
 )
@@ -112,6 +113,7 @@ data class StateUpdate(
     val walletChanges: Map<String, Int>? = null,
     val relationshipChanges: Map<String, String>? = null,
     // NEW: Inventory Management
+    val objectiveChanges: Map<String, String>? = null, // NEW
     val inventoryGained: List<String>? = null,
     val inventoryLost: List<String>? = null
 )
