@@ -13,7 +13,11 @@ class ContextPruner(initialLoreDatabase: List<LoreFragment>) {
     }
 
     // --- STAGE 1: FOR THE DIRECTOR (PRO) ---
-    fun buildGlobalContext(actor: Character): String {
+    fun buildGlobalContext(
+        actor: Character,
+        localCharacters: List<Character>,
+        adjacentLocations: List<Location>
+    ): String {
         val currentLocation = actor.currentLocation.name
         val activeContext = mutableListOf<String>()
 
@@ -26,11 +30,28 @@ class ContextPruner(initialLoreDatabase: List<LoreFragment>) {
         if (actor.wallet.isNotEmpty()) activeContext.add("- Wealth: ${actor.wallet.entries.joinToString { "${it.key}: ${it.value}" }}")
         if (actor.relationships.isNotEmpty()) activeContext.add("- Relationships: ${actor.relationships.entries.joinToString { "${it.key}: ${it.value}" }}")
         activeContext.add("- Inventory: ${if (actor.inventory.isEmpty()) "Empty" else actor.inventory.joinToString(", ")}")
-        activeContext.add("\nLOCATION FACTS:")
 
         // 2. Load Location Lore
+        activeContext.add("\nLOCATION FACTS:")
         val locationLore = globalLoreDatabase.filter { it.locationTag == currentLocation }
         activeContext.addAll(locationLore.map { "GLOBAL FACT: ${it.text}" })
+
+        // --- NEW: TIER 1 AWARENESS (Who is here?) ---
+        val otherPeople = localCharacters.filter { it.id != actor.id }
+        if (otherPeople.isNotEmpty()) {
+            activeContext.add("ENTITIES PRESENT IN ROOM:")
+            otherPeople.forEach { npc ->
+                activeContext.add("- ${npc.name} (${npc.background})")
+            }
+        }
+
+        // --- NEW: TIER 2 AWARENESS (Where can they go?) ---
+        if (adjacentLocations.isNotEmpty()) {
+            activeContext.add("ADJACENT ACCESSIBLE LOCATIONS:")
+            adjacentLocations.forEach { loc ->
+                activeContext.add("- ${loc.name}")
+            }
+        }
 
         if (actor.currentLocation.name.startsWith("The Path")) {
             activeContext.add("GLOBAL FACT: You are in the dangerous wilds between landmarks.")

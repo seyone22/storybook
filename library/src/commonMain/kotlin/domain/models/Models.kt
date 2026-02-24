@@ -110,7 +110,10 @@ data class DiscoveredCharacter(
 data class StateUpdate(
     val statChanges: Map<String, String>? = null,
     val walletChanges: Map<String, Int>? = null,
-    val relationshipChanges: Map<String, String>? = null
+    val relationshipChanges: Map<String, String>? = null,
+    // NEW: Inventory Management
+    val inventoryGained: List<String>? = null,
+    val inventoryLost: List<String>? = null
 )
 
 // UPDATED: Add it to the Playbook

@@ -153,11 +153,13 @@ class GeminiAiClient(
                   "personality": "string"
                 }
               ],
-              "stateUpdates": {
-                "statChanges": { "StatName": "NewValue" },
-                "walletChanges": { "CurrencyName": -5 },
-                "relationshipChanges": { "NPCName": "New Status" }
-              },
+                "stateUpdates": {
+                  "statChanges": { "StatName": "NewValue" },
+                  "walletChanges": { "CurrencyName": -5 },
+                  "relationshipChanges": { "NPCName": "New Status" },
+                  "inventoryGained": ["Item 1"],
+                  "inventoryLost": ["Item 2"]
+                },
               "requestedImagePrompt": "string or null"
             }
         """.trimIndent()
@@ -185,7 +187,9 @@ class GeminiAiClient(
                 StateUpdate(
                     statChanges = updatesDto.statChanges,
                     walletChanges = updatesDto.walletChanges,
-                    relationshipChanges = updatesDto.relationshipChanges
+                    relationshipChanges = updatesDto.relationshipChanges,
+                    inventoryGained = updatesDto.inventoryGained, // NEW
+                    inventoryLost = updatesDto.inventoryLost // NEW
                 )
             }
 

@@ -19,15 +19,36 @@ class StoryOrchestrator(
 ) {
 
     suspend fun startSession(): String {
+        // 1. Wipe any old memory
         memoryManager.clear()
-        val startingContext = contextPruner.buildGlobalContext(mainCharacter)
+
+        // 2. Gather Tier 1 and Tier 2 Spatial Data for the starting room
+        val localCharacters = characterManager.getCharactersInLocation(mainCharacter.currentLocation.id)
+        val adjacentLocations = mainCharacter.currentLocation.connectedLocations.mapNotNull {
+            spatialManager.getLocation(it)
+        }
+
+        // 3. Fetch the rich, context-aware lore
+        val startingContext = contextPruner.buildGlobalContext(mainCharacter, localCharacters, adjacentLocations)
+
+        // 4. Ask the AI to paint the initial scene with all that glorious context
         val prologueProse = aiClient.generatePrologue(worldState, mainCharacter, startingContext, worldConfig)
+
+        // 5. Save to memory
         memoryManager.addMemory(prologueProse)
+
         return prologueProse
     }
 
     suspend fun processTurn(rawInput: String): String {
-        val globalTruth = contextPruner.buildGlobalContext(mainCharacter)
+        // 1. Gather Tier 1 and Tier 2 Spatial Data
+        val localCharacters = characterManager.getCharactersInLocation(mainCharacter.currentLocation.id)
+        val adjacentLocations = mainCharacter.currentLocation.connectedLocations.mapNotNull {
+            spatialManager.getLocation(it)
+        }
+
+        // 2. Pass them to the Pruner!
+        val globalTruth = contextPruner.buildGlobalContext(mainCharacter, localCharacters, adjacentLocations)
         val storySoFar = memoryManager.getRecentHistory()
 
         val directorPlaybook = aiClient.getDirectorPlaybook(
@@ -45,6 +66,10 @@ class StoryOrchestrator(
                 mainCharacter.wallet[k] = current + v
             }
             updates.relationshipChanges?.forEach { (k, v) -> mainCharacter.relationships[k] = v }
+
+            // NEW: Apply Inventory Updates
+            updates.inventoryGained?.forEach { mainCharacter.inventory.add(it) }
+            updates.inventoryLost?.forEach { mainCharacter.inventory.remove(it) }
         }
 
         // --- ASSIMILATE HALLUCINATIONS ---

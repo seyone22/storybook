@@ -56,7 +56,9 @@ data class NewCharacterDto(
 data class StateUpdateDto(
     val statChanges: Map<String, String>? = null,
     val walletChanges: Map<String, Int>? = null, // e.g., {"Stags": -5}
-    val relationshipChanges: Map<String, String>? = null // e.g., {"Ayasa": "Owes a favor"}
+    val relationshipChanges: Map<String, String>? = null, // e.g., {"Ayasa": "Owes a favor"}
+    val inventoryGained: List<String>? = null,
+    val inventoryLost: List<String>? = null
 )
 
 @Serializable

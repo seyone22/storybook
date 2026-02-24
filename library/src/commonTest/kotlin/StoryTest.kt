@@ -107,7 +107,7 @@ class StoryEngineTest {
         }
 
         // 🚨 PASTE YOUR API KEY HERE 🚨
-        val aiClient = GeminiAiClient(apiKey = "FUCK_YOU", httpClient = ktorClient)
+        val aiClient = GeminiAiClient(apiKey = "F", httpClient = ktorClient)
 
         val spatial = SpatialManager(worldMap)
         val characterManager = CharacterManager(listOf(ain, ayasa, alistair, seraphina)) // <-- Injected!
